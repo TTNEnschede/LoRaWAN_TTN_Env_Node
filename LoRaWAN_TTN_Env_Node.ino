@@ -8,12 +8,13 @@
  * Lex Bolkesteijn 
  * ------------------------------------------------------------------------ 
  * Filename : LoRaWAN_TTN_Env_Node.ino  
- * Version  : 1.1 (BETA)
+ * Version  : 1.3 (BETA)
  * ------------------------------------------------------------------------
  * Description : A low power BME280 based datalogger for the ThingsNetwork.
  *  with deepsleep support and variable interval
  * ------------------------------------------------------------------------
  * Revision : 
+ *  - 2018-apr-19 1.3 working with OTAA
  *  - 2018-jan-04 1.2 reset status detection (on brownout detect skip Tx on startup)
  *  - 2017-dec-05 1.1 minor code updates
  *  - 2017-jul-17 1.0 first "beta"
@@ -133,18 +134,26 @@ const lmic_pinmap lmic_pins = {
     .dio = {LMIC_DIO0, LMIC_DIO1, LMIC_DIO2},  
 }; 
 
+//
 // UPDATE WITH YOURE TTN KEYS AND ADDR
-static const PROGMEM u1_t NWKSKEY[16] = { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 }; // LoRaWAN NwkSKey, network session key 
-static const u1_t PROGMEM APPSKEY[16] = { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00A6, 0x00 }; // LoRaWAN AppSKey, application session key 
-static const u4_t DEVADDR = 0x00000000 ; // LoRaWAN end-device address (DevAddr)
+//
+// This EUI must be in little-endian format, so least-significant-byte
+// first. When copying an EUI from ttnctl output, this means to reverse
+// the bytes. For TTN issued EUIs the last bytes should be 0xD5, 0xB3,
+// 0x70.
+static const u1_t PROGMEM APPEUI[8]={ 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
+void os_getArtEui (u1_t* buf) { memcpy_P(buf, APPEUI, 8);}
 
+// This should also be in little endian format, see above.
+static const u1_t PROGMEM DEVEUI[8]={ 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
+void os_getDevEui (u1_t* buf) { memcpy_P(buf, DEVEUI, 8);}
 
-// These callbacks are only used in over-the-air activation, so they are
-// left empty here (we cannot leave them out completely unless
-// DISABLE_JOIN is set in config.h, otherwise the linker will complain).
-void os_getArtEui (u1_t* buf) { }
-void os_getDevEui (u1_t* buf) { }
-void os_getDevKey (u1_t* buf) { }
+// This key should be in big endian format (or, since it is not really a
+// number but a block of memory, endianness does not really apply). In
+// practice, a key taken from ttnctl can be copied as-is.
+// The key shown here is the semtech default key.
+static const u1_t PROGMEM APPKEY[16] = { 0x2B, 0x7E, 0x15, 0x16, 0x28, 0xAE, 0xD2, 0xA6, 0xAB, 0xF7, 0x15, 0x88, 0x09, 0xCF, 0x4F, 0x3C };
+void os_getDevKey (u1_t* buf) {  memcpy_P(buf, APPKEY, 16);}
  
 static osjob_t sendjob; 
 
@@ -196,31 +205,35 @@ void onEvent (ev_t ev)
     switch(ev) 
     {
         case EV_SCAN_TIMEOUT:
-            //debugPrintLn(F("EV_SCAN_TIMEOUT"));
+            debugPrintLn(F("EV_SCAN_TIMEOUT"));
             break;
         case EV_BEACON_FOUND:
-            //debugPrintLn(F("EV_BEACON_FOUND"));
+            debugPrintLn(F("EV_BEACON_FOUND"));
             break;
         case EV_BEACON_MISSED:
-            //debugPrintLn(F("EV_BEACON_MISSED"));
+            debugPrintLn(F("EV_BEACON_MISSED"));
             break;
         case EV_BEACON_TRACKED:
-            //debugPrintLn(F("EV_BEACON_TRACKED"));
+            debugPrintLn(F("EV_BEACON_TRACKED"));
             break;
         case EV_JOINING:
-            //debugPrintLn(F("EV_JOINING"));
+            debugPrintLn(F("EV_JOINING"));
             break;
         case EV_JOINED:
-            //debugPrintLn(F("EV_JOINED"));
+            debugPrintLn(F("EV_JOINED"));
+                        
+            // Disable link check validation (automatically enabled
+            // during join, but not supported by TTN at this time).
+            LMIC_setLinkCheckMode(0);
             break;
         case EV_RFU1:
-            //debugPrintLn(F("EV_RFU1"));
+            debugPrintLn(F("EV_RFU1"));
             break;
         case EV_JOIN_FAILED:
-            //debugPrintLn(F("EV_JOIN_FAILED"));
+            debugPrintLn(F("EV_JOIN_FAILED"));
             break;
         case EV_REJOIN_FAILED:
-            //debugPrintLn(F("EV_REJOIN_FAILED"));
+            debugPrintLn(F("EV_REJOIN_FAILED"));
             break;
         case EV_TXCOMPLETE:
             debugPrintLn(F("EV_TXC"));
@@ -237,23 +250,23 @@ void onEvent (ev_t ev)
             LMIC_transmitted = 1; 
             break;
         case EV_LOST_TSYNC:
-            //debugPrintLn(F("EV_LOST_TSYNC"));
+            debugPrintLn(F("EV_LOST_TSYNC"));
             break;
         case EV_RESET:
-            //debugPrintLn(F("EV_RESET"));
+            debugPrintLn(F("EV_RESET"));
             break;
         case EV_RXCOMPLETE:
             // data received in ping slot
-            //debugPrintLn(F("EV_RXCOMPLETE"));
+            debugPrintLn(F("EV_RXCOMPLETE"));
             break;
         case EV_LINK_DEAD:
-            //debugPrintLn(F("EV_LINK_DEAD"));
+            debugPrintLn(F("EV_LINK_DEAD"));
             break;
         case EV_LINK_ALIVE:
-            //debugPrintLn(F("EV_LINK_ALIVE"));
+            debugPrintLn(F("EV_LINK_ALIVE"));
             break;
          default:
-            //debugPrintLn(F("Unknown event"));
+            debugPrintLn(F("Unknown event"));
             break;
     }
 }
@@ -393,45 +406,9 @@ void setup()
   
     // LMIC init
     os_init();
+    
     // Reset the MAC state. Session and pending data transfers will be discarded.
     LMIC_reset();
-
-    // Set static session parameters. Instead of dynamically establishing a session
-    // by joining the network, precomputed session parameters are be provided.
-    #ifdef PROGMEM
-    // On AVR, these values are stored in flash and only copied to RAM
-    // once. Copy them to a temporary buffer here, LMIC_setSession will
-    // copy them into a buffer of its own again.
-    uint8_t appskey[sizeof(APPSKEY)];
-    uint8_t nwkskey[sizeof(NWKSKEY)];
-    memcpy_P(appskey, APPSKEY, sizeof(APPSKEY));
-    memcpy_P(nwkskey, NWKSKEY, sizeof(NWKSKEY));
-    LMIC_setSession (0x1, DEVADDR, nwkskey, appskey);
-    #else
-    // If not running an AVR with PROGMEM, just use the arrays directly
-    LMIC_setSession (0x1, DEVADDR, NWKSKEY, APPSKEY);
-    #endif
-
-    #if defined(CFG_eu868)
-    // Set up the channels used by the Things Network, which corresponds
-    // to the defaults of most gateways. Without this, only three base
-    // channels from the LoRaWAN specification are used, which certainly
-    // works, so it is good for debugging, but can overload those
-    // frequencies, so be sure to configure the full frequency range of
-    // your network here (unless your network autoconfigures them).
-    // Setting up channels should happen after LMIC_setSession, as that
-    // configures the minimal channel set.
-    // NA-US channels 0-71 are configured automatically
-    LMIC_setupChannel(0, 868100000, DR_RANGE_MAP(DR_SF12, DR_SF7),  BAND_CENTI);      // g-band
-    LMIC_setupChannel(1, 868300000, DR_RANGE_MAP(DR_SF12, DR_SF7B), BAND_CENTI);      // g-band
-    LMIC_setupChannel(2, 868500000, DR_RANGE_MAP(DR_SF12, DR_SF7),  BAND_CENTI);      // g-band
-    LMIC_setupChannel(3, 867100000, DR_RANGE_MAP(DR_SF12, DR_SF7),  BAND_CENTI);      // g-band
-    LMIC_setupChannel(4, 867300000, DR_RANGE_MAP(DR_SF12, DR_SF7),  BAND_CENTI);      // g-band
-    LMIC_setupChannel(5, 867500000, DR_RANGE_MAP(DR_SF12, DR_SF7),  BAND_CENTI);      // g-band
-    LMIC_setupChannel(6, 867700000, DR_RANGE_MAP(DR_SF12, DR_SF7),  BAND_CENTI);      // g-band
-    LMIC_setupChannel(7, 867900000, DR_RANGE_MAP(DR_SF12, DR_SF7),  BAND_CENTI);      // g-band
-    LMIC_setupChannel(8, 868800000, DR_RANGE_MAP(DR_FSK,  DR_FSK),  BAND_MILLI);      // g2-band
-
 
     // For single channel gateways: Restrict to channel 0 when defined above
 #ifdef CHANNEL0
@@ -445,18 +422,6 @@ void setup()
     LMIC_disableChannel(8);
 #endif
 
-    // TTN defines an additional channel at 869.525Mhz using SF9 for class B
-    // devices' ping slots. LMIC does not have an easy way to define set this
-    // frequency and support for class B is spotty and untested, so this
-    // frequency is not configured here.
-    #elif defined(CFG_us915)
-    // NA-US channels 0-71 are configured automatically
-    // but only one group of 8 should (a subband) should be active
-    // TTN recommends the second sub band, 1 in a zero based count.
-    // https://github.com/TheThingsNetwork/gateway-conf/blob/master/US-global_conf.json
-    LMIC_selectSubBand(1);
-    #endif
-
     // Disable link check validation
     LMIC_setLinkCheckMode(0);
 
@@ -465,6 +430,10 @@ void setup()
 
     // Set data rate and transmit power for uplink (note: txpow seems to be ignored by the library)
     LMIC_setDrTxpow(DR_SF7,14); 
+
+    // Let LMIC compensate for +/- 1% clock error
+    LMIC_setClockError(MAX_CLOCK_ERROR * 1 / 100);
+
     debugPrintLn(F("S")); // Setup complete!"
     debugFlush();   
 }
